@@ -11,14 +11,20 @@ frequenzy = sys.argv[4]
 #today_print = "2022-05-12"
 try:
         taken_snapshots = pickle.load(open( "taken_snapshots.p", "rb" ) )
+except FileNotFoundError:
+        taken_snapshots = False 
+try:
         transfered_snapshots = pickle.load(open( "sent_snapshots.p", "rb" ) )
 except FileNotFoundError:
-        taken_snapshots = None 
-        transfered_snapshots = None
-print_out = transfer_snapshot(subvolume_location, snapshot_loaction,external_location)
-transfered_snapshots = print_out[1]
-print(print_out[0])
-print(print_out[1])
-#print(print_out))
-#pickle.dump(taken_snapshots, open( "taken_snapshots.p", "wb" ) )
-#pickle.dump(transfered_snapshots, open( "sent_snapshots.p", "wb" ) )
+        transfered_snapshots = False
+print_out = transfer_snapshot(subvolume_location, snapshot_loaction,external_location,taken_snapshots,transfered_snapshots)
+try:
+        transfered_snapshots = print_out[1]
+        print(print_out[0])
+        print(print_out[1])
+        if type(transfered_snapshots) == dict:
+                pickle.dump(taken_snapshots, open( "taken_snapshots.p", "wb" ) )
+                pickle.dump(transfered_snapshots, open( "sent_snapshots.p", "wb" ) )
+except TypeError:
+        print("TypeError: ", print_out[1])
+        pass

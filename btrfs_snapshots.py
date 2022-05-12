@@ -9,17 +9,18 @@ external_location = sys.argv[3]
 frequenzy = sys.argv[4]
 today=datetime.today()
 today_print = today.strftime("%Y-%m-%d")
-today_print = "2021-05-14"
+#today_print = "2022-05-13"
 wochentag = int(today.strftime("%w")) #Formatierung des Wochentages in eine Zahl fuer die If uebperuefung
-
 #sudo btrfs subvolume snapshot /mnt/Private-Cloud/Dokumente /mnt/Private-Cloud/.snapshots/Dokumente_2022-05-10
 snapshot_name = str
+"""
 try:
         taken_snapshots = pickle.load(open( "taken_snapshots.p", "rb" ) )
         transfered_snapshots = pickle.load(open( "sent_snapshots.p", "rb" ) )
 except FileNotFoundError:
         taken_snapshots = None 
         transfered_snapshots = None
+"""
 def get_snapshot_name(source_subvolume):
         snapshot_tag = source_subvolume.split("/")
         while len(snapshot_tag) > 1:
@@ -33,26 +34,29 @@ def get_snapshot_name(source_subvolume):
         snapshot_name = "%s_%s" %(snapshot_tag,today_print)
         return snapshot_name, snapshot_tag, today_print
 
-def take_snapshot(source_subvolume, destination_subvolume,):
+def take_snapshot(source_subvolume, destination_subvolume,taken_snapshots):
         snapshot_name = get_snapshot_name(source_subvolume)[0]
         snapshot_tag = get_snapshot_name(source_subvolume)[1]
         snapshot_date = get_snapshot_name(source_subvolume)[2]
         take_snapshot_command = "sudo btrfs subvolume snapshot -r %s %s/%s" %(source_subvolume,destination_subvolume,snapshot_name)
-        global taken_snapshots
-        if taken_snapshots == None:
+        #global taken_snapshots
+        if taken_snapshots == False or taken_snapshots == None:
                 taken_snapshots = {snapshot_tag:[snapshot_date]}
+                print("if1-",taken_snapshots == None,"\n",taken_snapshots )
         elif snapshot_tag not in taken_snapshots:
+                print("if2-",snapshot_tag not in taken_snapshots)
                 taken_snapshots = {snapshot_tag:[snapshot_date]}
         elif snapshot_date not in taken_snapshots[snapshot_tag]:
+                print("if3",snapshot_date not in taken_snapshots[snapshot_tag])
                 taken_snapshots[snapshot_tag].append(snapshot_date)
         else:
-                print("Snapshot '%s' already exists" %(snapshot_name))
-                return False
-        take_command = subprocess.run(['echo',take_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True)
+                error_message = "Snapshot '%s' already exists" %(snapshot_name)
+                return False, error_message
+        take_command = subprocess.run([take_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True,shell=True)
         take_command
         return take_command.stdout, taken_snapshots
 
-def transfer_snapshot(source_subvolume, destination_subvolume,external_subvolume):
+def transfer_snapshot(source_subvolume, destination_subvolume,external_subvolume,taken_snapshots,transfered_snapshots):
         # sudo btrfs send -p \
         # /mnt/Private-Cloud/.snapshots/Dokumente_2022-05-10\
         # /mnt/Private-Cloud/.snapshots/Dokumente_2022-05-10 | 
@@ -60,38 +64,40 @@ def transfer_snapshot(source_subvolume, destination_subvolume,external_subvolume
         snapshot_name = get_snapshot_name(source_subvolume)[0]
         snapshot_tag = get_snapshot_name(source_subvolume)[1]
         snapshot_date = get_snapshot_name(source_subvolume)[2]
+        #global taken_snapshots
         newest_snapshot_date = taken_snapshots[snapshot_tag][(len(taken_snapshots[snapshot_tag])-1)]
         newest_snapshot = "%s_%s" %(snapshot_tag,newest_snapshot_date)
-        global transfered_snapshots
-        if transfered_snapshots == None:
+        #global transfered_snapshots
+        if transfered_snapshots == False:
                 transfered_snapshots = {snapshot_tag:[snapshot_date]}
         elif snapshot_tag not in transfered_snapshots:
                 transfered_snapshots = {snapshot_tag:[snapshot_date]}
         elif snapshot_date not in transfered_snapshots[snapshot_tag]:
                 transfered_snapshots[snapshot_tag].append(snapshot_date)
-        else:
-                print("Snapshot already on External Device")
-                return False
+        else:   
+                error_message = "Snapshot '{name}' already on External Device".format(name=snapshot_name)
+                return False, error_message
         if len(taken_snapshots[snapshot_tag]) > 1:
                 previous_snapshot_date = taken_snapshots[snapshot_tag][(len(taken_snapshots[snapshot_tag])-2)]
                 previous_snapshot = "%s_%s" %(snapshot_tag,previous_snapshot_date)
                 transfer_snapshot_command = "\
-sudo btrfs send -p\ \n \
-{subvolume}/{parental}\ \n \
-{subvolume}/{newest}\ \n \
-|btrfs receive {external_path}" \
+                sudo btrfs send -p\
+                {subvolume}/{parental}\
+                {subvolume}/{newest}\
+                |btrfs receive {external_path}" \
 .format(subvolume=destination_subvolume,parental=previous_snapshot,newest=newest_snapshot,external_path=external_subvolume)
-                transfer_command = subprocess.run(['echo',transfer_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True)
+                print(transfer_snapshot_command)
+                transfer_command = subprocess.run([transfer_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True,shell=True)
                 transfer_command
                 return transfer_command.stdout, transfered_snapshots
         else:
                 transfer_snapshot_command = "sudo btrfs send {subvolume}/{snapshot} | btrfs receive {external_path}"\
                 .format(subvolume=destination_subvolume,snapshot=newest_snapshot,external_path=external_subvolume)
-                transfer_command = subprocess.run(['echo',transfer_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True)
+                transfer_command = subprocess.run([transfer_snapshot_command], stdout = subprocess.PIPE,universal_newlines=True,shell=True)
                 transfer_command
                 return transfer_command.stdout, transfered_snapshots
 
-def purge_snapshot(source_subvolume, destination_subvolume,external_subvolume, frequenzy):
+def purge_snapshot(source_subvolume, destination_subvolume,external_subvolume, taken_snapshots, transfered_snapshots,frequenzy):
         snapshot_name = get_snapshot_name(source_subvolume)[0]
         snapshot_tag = get_snapshot_name(source_subvolume)[1]
         snapshot_date = get_snapshot_name(source_subvolume)[2]
@@ -102,9 +108,9 @@ def purge_snapshot(source_subvolume, destination_subvolume,external_subvolume, f
                         if calculate_oldest_snapshot.strftime("%Y-%m-%d") in taken_snapshots[snapshot_tag]:
                                 purge_oldest_on_host = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=destination_subvolume,snapshot=oldest_snapshot)
                                 purge_oldest_on_external = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=external_subvolume,snapshot=oldest_snapshot)
-                                purge_on_host_command = subprocess.run(['echo',purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_host_command = subprocess.run([purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
                                 purge_on_host_command
-                                purge_on_external_command = subprocess.run(['echo',purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_external_command = subprocess.run([purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True,shell=True)
                                 purge_on_external_command
                                 taken_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
                                 transfered_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
@@ -123,9 +129,9 @@ def purge_snapshot(source_subvolume, destination_subvolume,external_subvolume, f
                         #Berechne die Startzeit des Befehls, im Prinzip kommt hier der Montag vor einer Woche als Datum heraus.
                                 purge_oldest_on_host = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=destination_subvolume,snapshot=oldest_snapshot)
                                 purge_oldest_on_external = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=external_subvolume,snapshot=oldest_snapshot)
-                                purge_on_host_command = subprocess.run(['echo',purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_host_command = subprocess.run([purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
                                 purge_on_host_command
-                                purge_on_external_command = subprocess.run(['echo',purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_external_command = subprocess.run([purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True)
                                 purge_on_external_command
                                 taken_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
                                 transfered_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
@@ -141,9 +147,9 @@ def purge_snapshot(source_subvolume, destination_subvolume,external_subvolume, f
                         if calculate_oldest_snapshot.strftime("%Y-%m-%d") in taken_snapshots[snapshot_tag]:
                                 purge_oldest_on_host = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=destination_subvolume,snapshot=oldest_snapshot)
                                 purge_oldest_on_external = "sudo btrfs subvolume delete {destination}/{snapshot}".format(destination=external_subvolume,snapshot=oldest_snapshot)
-                                purge_on_host_command = subprocess.run(['echo',purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_host_command = subprocess.run([purge_oldest_on_host], stdout = subprocess.PIPE,universal_newlines=True)
                                 purge_on_host_command
-                                purge_on_external_command = subprocess.run(['echo',purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True)
+                                purge_on_external_command = subprocess.run([purge_oldest_on_external], stdout = subprocess.PIPE,universal_newlines=True)
                                 purge_on_external_command
                                 taken_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
                                 transfered_snapshots[snapshot_tag].remove(calculate_oldest_snapshot.strftime("%Y-%m-%d"))
